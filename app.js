@@ -1,464 +1,649 @@
+(function () {
+  const CATEGORY_META = {
+    Essen: { icon: '🍴', cls: 'c-food' },
+    Transport: { icon: '🚗', cls: 'c-transport' },
+    Freizeit: { icon: '🎮', cls: 'c-fun' },
+    Haushalt: { icon: '🏠', cls: 'c-house' },
+    Sonstiges: { icon: '📦', cls: 'c-other' }
+  };
 
-const STORAGE_KEY = "sparplan_app_v2_static";
+  const storageKey = 'sparplan_static_v2';
 
-const state = loadState();
+  function todayISO() {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
 
-function currentMonthStr() {
-  return new Date().toISOString().slice(0, 7);
-}
-function todayStr() {
-  return new Date().toISOString().slice(0, 10);
-}
-function formatEUR(v) {
-  return new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" }).format(Number(v || 0));
-}
-function daysInMonth(month) {
-  const [y,m] = month.split("-").map(Number);
-  return new Date(y, m, 0).getDate();
-}
-function dateInMonth(date, month) {
-  return (date || "").startsWith(month);
-}
-function monthLabel(month) {
-  const [y,m] = month.split("-").map(Number);
-  const d = new Date(y, m-1, 1);
-  return d.toLocaleDateString("de-DE", { month: "long", year: "numeric" });
-}
-function newId() {
-  return Date.now() + Math.floor(Math.random()*100000);
-}
-function loadState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const data = JSON.parse(raw);
-      ensureMonth(data, currentMonthStr());
-      return data;
-    }
-  } catch (e) {}
-  return {
-    currentTab: "start",
-    settings: { strictMode: true },
-    months: {
-      [currentMonthStr()]: {
-        income: 2500,
-        salaryDay: 1,
-        salaryReceivedDate: "",
-        savingsType: "percent",
-        savingsValue: 30,
-        fixedCosts: [
-          { id:newId(), name:"Miete", amount:850, dueDay:1, lastPaidDate:"", recurring:true },
-          { id:newId(), name:"Strom", amount:70, dueDay:5, lastPaidDate:"", recurring:true },
-          { id:newId(), name:"Internet", amount:40, dueDay:10, lastPaidDate:"", recurring:true },
-          { id:newId(), name:"Versicherungen", amount:120, dueDay:15, lastPaidDate:"", recurring:true }
-        ],
-        entries: [],
-        notes: ""
+  function monthKeyFromDate(dateStr) {
+    return dateStr.slice(0, 7);
+  }
+
+  function formatEUR(v) {
+    return new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(Number(v || 0));
+  }
+
+  function monthTitle(key) {
+    const [y, m] = key.split('-').map(Number);
+    return new Intl.DateTimeFormat('de-DE', { month: 'long', year: 'numeric' }).format(new Date(y, m - 1, 1));
+  }
+
+  function daysInMonth(key) {
+    const [y, m] = key.split('-').map(Number);
+    return new Date(y, m, 0).getDate();
+  }
+
+  function clamp(n, min, max) { return Math.min(max, Math.max(min, n)); }
+
+  function createDefaultState() {
+    const month = monthKeyFromDate(todayISO());
+    return {
+      activeMonth: month,
+      months: {
+        [month]: {
+          income: 2500,
+          salaryDay: 1,
+          salaryReceivedDate: '',
+          savingsType: 'percent',
+          savingsValue: 30,
+          strictMode: true,
+          fixedCosts: [
+            { id: uid(), name: 'Miete', amount: 850, dueDay: 1, recurring: true, paidDate: '' },
+            { id: uid(), name: 'Strom', amount: 70, dueDay: 5, recurring: true, paidDate: '' },
+            { id: uid(), name: 'Internet', amount: 40, dueDay: 10, recurring: true, paidDate: '' },
+            { id: uid(), name: 'Versicherungen', amount: 120, dueDay: 15, recurring: true, paidDate: '' }
+          ],
+          expenses: [
+            { id: uid(), date: todayISO(), category: 'Essen', note: 'Rewe Einkauf', amount: 45.8 },
+            { id: uid(), date: todayISO(), category: 'Transport', note: 'Tankstelle', amount: 65 },
+            { id: uid(), date: todayISO(), category: 'Freizeit', note: 'Kino', amount: 24.5 }
+          ]
+        }
       }
+    };
+  }
+
+  function uid() {
+    return Math.random().toString(36).slice(2) + Date.now().toString(36);
+  }
+
+  function loadState() {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return createDefaultState();
+      const parsed = JSON.parse(raw);
+      if (!parsed || !parsed.months) return createDefaultState();
+      return parsed;
+    } catch (_) {
+      return createDefaultState();
     }
-  };
-}
-function ensureMonth(data, month) {
-  if (data.months[month]) return;
-  const months = Object.keys(data.months).sort();
-  const prev = data.months[months[months.length-1]];
-  data.months[month] = {
-    income: prev?.income || 0,
-    salaryDay: prev?.salaryDay || 1,
-    salaryReceivedDate: "",
-    savingsType: prev?.savingsType || "percent",
-    savingsValue: prev?.savingsValue || 20,
-    fixedCosts: (prev?.fixedCosts || []).filter(x => x.recurring).map(x => ({
-      id:newId(), name:x.name, amount:x.amount, dueDay:x.dueDay || 1, lastPaidDate:"", recurring:true
-    })),
-    entries: [],
-    notes: ""
-  };
-}
-function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-}
-function appMonth() {
-  ensureMonth(state, selectedMonth());
-  return state.months[selectedMonth()];
-}
-function selectedMonth() {
-  const el = document.getElementById("monthSelect");
-  return el ? el.value : currentMonthStr();
-}
-function calc(month) {
-  const m = state.months[month];
-  const income = Number(m.income || 0);
-  const fixedTotal = m.fixedCosts.reduce((s,x)=>s+Number(x.amount||0),0);
-  const savingsTarget = m.savingsType === "amount" ? Number(m.savingsValue||0) : income * (Number(m.savingsValue||0)/100);
-  const plannedFlexible = Math.max(0, income - fixedTotal - savingsTarget);
-  const strictReserve = state.settings.strictMode ? plannedFlexible * 0.1 : 0;
-  const usableFlexible = Math.max(0, plannedFlexible - strictReserve);
-  const entriesThisMonth = m.entries.filter(e => dateInMonth(e.date, month));
-  const spentTotal = entriesThisMonth.reduce((s,x)=>s+Number(x.amount||0),0);
-  const todaySpent = entriesThisMonth.filter(e => e.date===todayStr()).reduce((s,x)=>s+Number(x.amount||0),0);
-  const dim = daysInMonth(month);
-  const today = dateInMonth(todayStr(), month) ? new Date().getDate() : 1;
-  const remainingDays = Math.max(1, dim - today + 1);
-  const remainingFlexible = usableFlexible - spentTotal;
-  const dayBudgetRemaining = Math.max(0, remainingFlexible) / remainingDays;
-  const progress = usableFlexible > 0 ? Math.min(100, (spentTotal / usableFlexible) * 100) : 0;
-  return { income,fixedTotal,savingsTarget,plannedFlexible,strictReserve,usableFlexible,entriesThisMonth,spentTotal,todaySpent,remainingFlexible,dayBudgetRemaining,progress,dim };
-}
-function upcomingBills(month) {
-  const m = state.months[month];
-  const today = dateInMonth(todayStr(), month) ? Number(todayStr().slice(8,10)) : 1;
-  return [...m.fixedCosts].sort((a,b)=>(Number(a.dueDay||1)-Number(b.dueDay||1))).map(x => {
-    const due = Number(x.dueDay || 1);
-    let status = "future";
-    if (x.lastPaidDate && dateInMonth(x.lastPaidDate, month)) status = "paid";
-    else if (due < today) status = "late";
-    else if (due === today) status = "today";
-    return {...x,status};
-  });
-}
-function assistantMessage(month, c) {
-  if (c.usableFlexible <= 0) {
-    return { cls:"danger", text:"Es bleibt aktuell kein flexibles Budget. Prüfe Einkommen, Fixkosten oder Sparziel." };
   }
-  if (c.remainingFlexible < 0) {
-    return { cls:"danger", text:`Du bist ${formatEUR(Math.abs(c.remainingFlexible))} über deinem Monatsbudget.` };
-  }
-  const billsLate = upcomingBills(month).filter(x => x.status === "late");
-  if (billsLate.length) {
-    return { cls:"warn", text:`Achtung: ${billsLate.length} Fixkosten sind laut Plan bereits fällig und noch nicht als bezahlt markiert.` };
-  }
-  return { cls:"good", text:`Gut. Du liegst unter Plan. Für die restlichen Tage sind etwa ${formatEUR(c.dayBudgetRemaining)} pro Tag sinnvoll.` };
-}
-function render() {
-  const month = selectedMonth() || currentMonthStr();
-  ensureMonth(state, month);
-  const m = state.months[month];
-  const c = calc(month);
-  const assistant = assistantMessage(month, c);
-  const bills = upcomingBills(month);
-  const categories = {};
-  c.entriesThisMonth.forEach(e => categories[e.category] = (categories[e.category] || 0) + Number(e.amount || 0));
-  const categoryRows = Object.entries(categories).sort((a,b)=>b[1]-a[1]);
 
-  const monthOptions = Object.keys(state.months).sort().map(x => `<option value="${x}" ${x===month?'selected':''}>${monthLabel(x)}</option>`).join("");
+  let state = loadState();
+  ensureMonth(state.activeMonth);
 
-  document.getElementById("app").innerHTML = `
-    <div class="header">
-      <div class="title">
-        <h1>Sparplan App</h1>
-        <p>Budget planen. Alltag erfassen. Mehr sparen.</p>
+  function save() {
+    localStorage.setItem(storageKey, JSON.stringify(state));
+  }
+
+  function ensureMonth(month) {
+    if (state.months[month]) return;
+    const lastMonth = Object.keys(state.months).sort().slice(-1)[0];
+    const prev = state.months[lastMonth] || createDefaultState().months[lastMonth];
+    state.months[month] = {
+      income: prev.income || 0,
+      salaryDay: prev.salaryDay || 1,
+      salaryReceivedDate: '',
+      savingsType: prev.savingsType || 'percent',
+      savingsValue: prev.savingsValue || 20,
+      strictMode: !!prev.strictMode,
+      fixedCosts: (prev.fixedCosts || []).filter(f => f.recurring).map(f => ({
+        id: uid(), name: f.name, amount: f.amount, dueDay: f.dueDay || 1, recurring: true, paidDate: ''
+      })),
+      expenses: []
+    };
+  }
+
+  function currentMonth() { return state.months[state.activeMonth]; }
+
+  function getComputed(monthKey = state.activeMonth) {
+    ensureMonth(monthKey);
+    const month = state.months[monthKey];
+    const today = todayISO();
+    const isCurrentMonth = monthKey === monthKeyFromDate(today);
+    const day = isCurrentMonth ? Number(today.slice(8, 10)) : 1;
+    const dim = daysInMonth(monthKey);
+    const fixedTotal = month.fixedCosts.reduce((a, b) => a + Number(b.amount || 0), 0);
+    const savingsTarget = month.savingsType === 'amount'
+      ? Number(month.savingsValue || 0)
+      : Number(month.income || 0) * Number(month.savingsValue || 0) / 100;
+    const baseFlexible = Math.max(0, Number(month.income || 0) - fixedTotal - savingsTarget);
+    const reserve = month.strictMode ? baseFlexible * 0.1 : 0;
+    const flexible = Math.max(0, baseFlexible - reserve);
+    const expenses = month.expenses.slice().sort((a, b) => b.date.localeCompare(a.date));
+    const spent = expenses.reduce((a, b) => a + Number(b.amount || 0), 0);
+    const remaining = Math.max(0, flexible - spent);
+    const daysLeft = Math.max(1, dim - day + 1);
+    const dailyBudget = remaining / daysLeft;
+    const todaySpent = expenses.filter(e => e.date === today).reduce((a, b) => a + Number(b.amount || 0), 0);
+    const usedPct = flexible > 0 ? clamp((spent / flexible) * 100, 0, 100) : 0;
+
+    const fixedStatus = month.fixedCosts.map(f => {
+      const paidThisMonth = (f.paidDate || '').startsWith(monthKey);
+      const overdue = !paidThisMonth && Number(f.dueDay || 1) < day && isCurrentMonth;
+      const pending = !paidThisMonth && !overdue;
+      return {
+        ...f,
+        paidThisMonth,
+        status: paidThisMonth ? 'green' : overdue ? 'amber' : 'red',
+        statusLabel: paidThisMonth ? 'Bezahlt' : overdue ? 'Überfällig' : 'Offen'
+      };
+    });
+
+    const overdueCount = fixedStatus.filter(x => !x.paidThisMonth && x.status === 'amber').length;
+    const grouped = {};
+    expenses.forEach(e => {
+      grouped[e.category] = (grouped[e.category] || 0) + Number(e.amount || 0);
+    });
+    const categoryRows = Object.entries(grouped)
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, amount]) => ({ name, amount, pct: spent > 0 ? Math.round(amount / spent * 100) : 0 }));
+
+    return {
+      month,
+      fixedTotal,
+      savingsTarget,
+      reserve,
+      flexible,
+      spent,
+      remaining,
+      dailyBudget,
+      todaySpent,
+      usedPct,
+      fixedStatus,
+      overdueCount,
+      categoryRows,
+      txCount: expenses.length,
+      avgExpense: expenses.length ? spent / expenses.length : 0,
+      daysLeft,
+      expenses
+    };
+  }
+
+  function render() {
+    save();
+    const computed = getComputed();
+    const app = document.getElementById('app');
+    app.innerHTML = `
+      <div class="container">
+        <div id="view-start">${renderStart(computed)}</div>
+        <div id="view-plan" class="hidden">${renderPlan(computed)}</div>
+        <div id="view-expenses" class="hidden">${renderExpenses(computed)}</div>
+        <div id="view-analysis" class="hidden">${renderAnalysis(computed)}</div>
       </div>
-      <div class="badge">${state.settings.strictMode ? "Sparmodus aktiv" : "Sparmodus aus"}</div>
-    </div>
-
-    <div class="card">
-      <div class="row">
-        <div class="col">
-          <label>Monat</label>
-          <select id="monthSelect">${monthOptions}</select>
-        </div>
-        <div class="col" style="max-width:210px">
-          <label>Neuen Monat anlegen</label>
-          <button class="secondary" id="newMonthBtn">Neuen Monat erstellen</button>
-        </div>
+      <div class="sheet-backdrop" id="sheet-backdrop"></div>
+      <div class="sheet" id="sheet-add-expense">
+        <div class="sheet-handle"></div>
+        ${renderAddExpenseSheet()}
       </div>
-    </div>
+      ${renderNav()}
+    `;
+    bind();
+    showView(window.__currentView || 'start');
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./sw.js').catch(() => {});
+    }
+  }
 
-    <div class="grid stats">
-      ${stat("Einnahmen", formatEUR(c.income))}
-      ${stat("Fixkosten", formatEUR(c.fixedTotal))}
-      ${stat("Sparziel", formatEUR(c.savingsTarget))}
-      ${stat("Heute noch möglich", formatEUR(c.dayBudgetRemaining))}
-    </div>
+  function renderStart(c) {
+    return `
+      <div class="topbar">
+        <div>
+          <div class="title">Sparplan</div>
+          <div class="subtitle">${escapeHtml(monthTitle(state.activeMonth))}</div>
+        </div>
+        <button class="pill" id="toggle-strict">🐷 ${c.month.strictMode ? 'Sparmodus' : 'Normal'}</button>
+      </div>
 
-    <div id="panel-start" class="panel ${state.currentTab==="start"?"active":""}">
-      <div class="card">
-        <h3 class="section-title">Dein Assistent</h3>
-        <div class="assistant ${assistant.cls}">${assistant.text}</div>
+      <div class="hero">
+        <div class="label">Tagesbudget</div>
+        <div class="value">${formatEUR(c.dailyBudget)}</div>
+        <div class="hero-grid">
+          <div class="hero-stat"><div class="small">Noch übrig</div><div class="big">${formatEUR(c.remaining)}</div></div>
+          <div class="hero-stat"><div class="small">Ausgegeben</div><div class="big">${formatEUR(c.spent)}</div></div>
+          <div class="hero-stat"><div class="small">Tage übrig</div><div class="big">${c.daysLeft}</div></div>
+        </div>
         <div class="progress-wrap">
-          <div class="progress-head"><span>Budgetfortschritt</span><span>${formatEUR(c.spentTotal)} von ${formatEUR(c.usableFlexible)}</span></div>
-          <div class="progress"><div style="width:${c.progress}%"></div></div>
-        </div>
-        <div class="info-grid" style="margin-top:14px">
-          <div class="info-box"><div class="muted">Tagesbudget ab jetzt</div><div class="strong" style="font-size:1.8rem">${formatEUR(c.dayBudgetRemaining)}</div></div>
-          <div class="info-box"><div class="muted">Monat noch übrig</div><div class="strong" style="font-size:1.8rem">${formatEUR(Math.max(0,c.remainingFlexible))}</div></div>
+          <div class="progress"><span style="width:${c.usedPct}%"></span></div>
+          <div class="progress-note">${Math.round(c.usedPct)}% des Budgets genutzt</div>
         </div>
       </div>
 
-      <div class="dual">
-        <div class="card">
-          <h3 class="section-title">Einnahme & Gehalt</h3>
-          <div class="list">
-            <div class="kv"><span class="muted">Geplantes Einkommen</span><span class="strong">${formatEUR(m.income)}</span></div>
-            <div class="kv"><span class="muted">Gehaltstag</span><span class="strong">${m.salaryDay || "-"}. des Monats</span></div>
-            <div class="kv"><span class="muted">Tatsächlich eingegangen</span><span class="strong">${m.salaryReceivedDate || "noch nicht eingetragen"}</span></div>
+      <div class="grid-2">
+        <div class="card stat-card blue"><div class="stat-label">Einnahmen</div><div class="stat-value">${formatEUR(c.month.income)}</div></div>
+        <div class="card stat-card red"><div class="stat-label">Fixkosten</div><div class="stat-value">${formatEUR(c.fixedTotal)}</div></div>
+        <div class="card stat-card green"><div class="stat-label">Sparziel</div><div class="stat-value">${formatEUR(c.savingsTarget)}</div></div>
+        <div class="card stat-card amber"><div class="stat-label">Heute ausgegeben</div><div class="stat-value">${formatEUR(c.todaySpent)}</div></div>
+      </div>
+
+      ${c.overdueCount ? `<div class="alert">⚠️ <div><strong>Achtung:</strong> ${c.overdueCount} Fixkosten sind bereits fällig und noch nicht als bezahlt markiert.</div></div>` : ''}
+
+      <div class="section">
+        <div class="section-title">Nächste Fixkosten</div>
+        <div class="card list-card">
+          ${c.fixedStatus.map(renderFixedPreview).join('')}
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Einnahme & Gehalt</div>
+        <div class="card split-table">
+          <div class="split-row"><span class="muted">Geplantes Einkommen</span><strong>${formatEUR(c.month.income)}</strong></div>
+          <div class="split-row"><span class="muted">Gehaltstag</span><strong>${c.month.salaryDay}. des Monats</strong></div>
+          <div class="split-row"><span class="muted">Eingegangen am</span><strong>${c.month.salaryReceivedDate || 'Noch nicht eingetragen'}</strong></div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderFixedPreview(f) {
+    return `
+      <div class="row-item">
+        <div class="left-group">
+          <div class="dot ${f.status}"></div>
+          <div>
+            <div class="item-title">${escapeHtml(f.name)}</div>
+            <div class="item-sub">Fällig am ${Number(f.dueDay)}.</div>
           </div>
         </div>
-        <div class="card">
-          <h3 class="section-title">Nächste Fixkosten</h3>
-          <div class="list">
-            ${bills.length ? bills.slice(0,4).map(billCard).join("") : `<div class="empty">Noch keine Fixkosten vorhanden.</div>`}
+        <div>
+          <div class="amount">${formatEUR(f.amount)}</div>
+          <div class="badge ${f.status}">${f.statusLabel}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderPlan(c) {
+    const month = c.month;
+    return `
+      <div class="toolbar">
+        <div class="title">Monatsplan</div>
+        <button class="primary" id="new-month">＋ Neuer Monat</button>
+      </div>
+
+      <div class="card form-card">
+        <div class="section-title">Einstellungen</div>
+        <div class="field">
+          <div class="label">Monatliches Einkommen (€)</div>
+          <input class="input" id="income-input" type="number" value="${Number(month.income || 0)}" />
+        </div>
+        <div class="form-grid">
+          <div class="field">
+            <div class="label">Gehaltstag</div>
+            <input class="input" id="salary-day-input" type="number" min="1" max="31" value="${Number(month.salaryDay || 1)}" />
+          </div>
+          <div class="field">
+            <div class="label">Eingegangen am</div>
+            <input class="input" id="salary-date-input" type="date" value="${month.salaryReceivedDate || ''}" />
           </div>
         </div>
-      </div>
-    </div>
-
-    <div id="panel-plan" class="panel ${state.currentTab==="plan"?"active":""}">
-      <div class="card">
-        <h3 class="section-title">Monatsplan</h3>
-        <div class="row">
-          <div class="col"><label>Einnahmen</label><input id="incomeInput" type="number" value="${m.income}" /></div>
-          <div class="col"><label>Gehaltstag</label><input id="salaryDayInput" type="number" min="1" max="31" value="${m.salaryDay || 1}" /></div>
-          <div class="col"><label>Tatsächlich eingegangen am</label><input id="salaryReceivedInput" type="date" value="${m.salaryReceivedDate || ""}" /></div>
-        </div>
-        <div class="row" style="margin-top:10px">
-          <div class="col">
-            <label>Sparziel-Art</label>
-            <select id="savingsTypeInput">
-              <option value="percent" ${m.savingsType==="percent"?"selected":""}>Prozent</option>
-              <option value="amount" ${m.savingsType==="amount"?"selected":""}>Fester Betrag</option>
-            </select>
-          </div>
-          <div class="col"><label>${m.savingsType==="amount"?"Sparziel Betrag":"Sparziel %"}</label><input id="savingsValueInput" type="number" value="${m.savingsValue}" /></div>
-          <div class="col"><label>Sparmodus</label><button class="${state.settings.strictMode?'primary':'secondary'}" id="strictModeToggle">${state.settings.strictMode?'Aktiv':'Deaktiviert'}</button></div>
-        </div>
-        <div style="margin-top:10px">
-          <label>Monatsnotiz</label>
-          <textarea id="monthNotesInput" placeholder="z. B. diesen Monat besonders auf Essen und Freizeit achten">${m.notes || ""}</textarea>
-        </div>
-        <div class="row" style="margin-top:10px">
-          <button class="primary" id="savePlanBtn">Monatsplan speichern</button>
-          <button class="secondary" id="exportBtn">Daten exportieren</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <h3 class="section-title">Fixkosten hinzufügen</h3>
-        <div class="row">
-          <div class="col"><label>Name</label><input id="fcName" placeholder="z. B. Handyvertrag" /></div>
-          <div class="col"><label>Betrag</label><input id="fcAmount" type="number" placeholder="0.00" /></div>
-        </div>
-        <div class="row" style="margin-top:10px">
-          <div class="col"><label>Fällig am Tag</label><input id="fcDueDay" type="number" min="1" max="31" value="1" /></div>
-          <div class="col"><label>Letztes Zahlungsdatum</label><input id="fcLastPaid" type="date" /></div>
-          <div class="col"><label>Wiederkehrend</label><select id="fcRecurring"><option value="true">Ja</option><option value="false">Nein</option></select></div>
-        </div>
-        <div class="row" style="margin-top:10px">
-          <button class="primary" id="addFixedBtn">Fixkosten speichern</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <h3 class="section-title">Deine Fixkosten</h3>
-        <div class="list">
-          ${m.fixedCosts.length ? m.fixedCosts.sort((a,b)=>Number(a.dueDay||1)-Number(b.dueDay||1)).map(fixedCostRow).join("") : `<div class="empty">Noch keine Fixkosten eingetragen.</div>`}
-        </div>
-      </div>
-    </div>
-
-    <div id="panel-erfassen" class="panel ${state.currentTab==="erfassen"?"active":""}">
-      <div class="card">
-        <h3 class="section-title">Ausgabe erfassen</h3>
-        <div class="row">
-          <div class="col"><label>Datum</label><input id="entryDate" type="date" value="${todayStr()}" /></div>
-          <div class="col">
-            <label>Kategorie</label>
-            <select id="entryCategory">
-              <option>Essen</option><option>Haushalt</option><option>Transport</option><option>Kinder</option><option>Freizeit</option><option>Gesundheit</option><option>Sonstiges</option>
-            </select>
+        <div class="field">
+          <div class="label">Sparziel-Art</div>
+          <div class="segment">
+            <button class="${month.savingsType === 'percent' ? 'active' : ''}" data-savings-type="percent">Prozent</button>
+            <button class="${month.savingsType === 'amount' ? 'active' : ''}" data-savings-type="amount">Betrag</button>
           </div>
         </div>
-        <div class="row" style="margin-top:10px">
-          <div class="col"><label>Notiz</label><input id="entryNote" placeholder="z. B. Rewe" /></div>
-          <div class="col"><label>Betrag</label><input id="entryAmount" type="number" placeholder="0.00" /></div>
+        <div class="field">
+          <div class="label">${month.savingsType === 'percent' ? 'Sparziel (%)' : 'Sparziel (€)'}</div>
+          <input class="input" id="savings-input" type="number" value="${Number(month.savingsValue || 0)}" />
         </div>
-        <div class="row" style="margin-top:10px">
-          <button class="primary" id="addEntryBtn">Ausgabe speichern</button>
-        </div>
-      </div>
-    </div>
-
-    <div id="panel-ausgaben" class="panel ${state.currentTab==="ausgaben"?"active":""}">
-      <div class="card">
-        <h3 class="section-title">Ausgaben dieses Monats</h3>
-        <div class="list">
-          ${c.entriesThisMonth.length ? [...c.entriesThisMonth].sort((a,b)=>b.date.localeCompare(a.date)).map(entryRow).join("") : `<div class="empty">Noch keine Ausgaben für diesen Monat.</div>`}
+        <div class="switchline">
+          <div>
+            <div style="font-size:18px;font-weight:800">Sparmodus (10% Reserve)</div>
+            <div class="muted">Hält 10% des flexiblen Budgets zurück</div>
+          </div>
+          <button id="strict-switch" class="switch ${month.strictMode ? 'on' : 'off'}"><span></span></button>
         </div>
       </div>
-    </div>
 
-    <div id="panel-analyse" class="panel ${state.currentTab==="analyse"?"active":""}">
-      <div class="card">
-        <h3 class="section-title">Analyse</h3>
-        <div class="list">
-          <div class="item"><div><div class="strong">Fixkostenquote</div><div class="meta">Anteil der festen Kosten am Einkommen</div></div><div class="strong">${c.income ? Math.round((c.fixedTotal / c.income) * 100) : 0}%</div></div>
-          <div class="item"><div><div class="strong">Geplante Sparquote</div><div class="meta">Anteil des Sparziels am Einkommen</div></div><div class="strong">${c.income ? Math.round((c.savingsTarget / c.income) * 100) : 0}%</div></div>
-          <div class="item"><div><div class="strong">Flexibles Budget genutzt</div><div class="meta">Wie viel vom freien Budget bereits ausgegeben wurde</div></div><div class="strong">${Math.round(c.progress)}%</div></div>
+      <div class="section"></div>
+      <div class="card form-card">
+        <div class="section-title">Fixkosten hinzufügen</div>
+        <div class="field">
+          <div class="label">Name</div>
+          <input class="input" id="fixed-name" placeholder="z.B. Handyvertrag" />
         </div>
-        <hr class="sep" />
-        <h3 class="section-title">Kategorien</h3>
-        <div class="list">
-          ${categoryRows.length ? categoryRows.map(([cat,total]) => `<div class="item"><div><div class="strong">${cat}</div><div class="meta">${c.spentTotal ? Math.round((total / c.spentTotal) * 100) : 0}% deiner Ausgaben</div></div><div class="strong">${formatEUR(total)}</div></div>`).join("") : `<div class="empty">Sobald du Ausgaben erfasst, erscheinen hier deine Kategorien.</div>`}
+        <div class="form-grid">
+          <div class="field">
+            <div class="label">Betrag (€)</div>
+            <input class="input" id="fixed-amount" type="number" placeholder="0.00" />
+          </div>
+          <div class="field">
+            <div class="label">Fällig am Tag</div>
+            <input class="input" id="fixed-due" type="number" min="1" max="31" value="1" />
+          </div>
+        </div>
+        <div class="switchline">
+          <div style="font-size:18px;font-weight:800">Wiederkehrend</div>
+          <button id="fixed-recurring" class="switch on"><span></span></button>
+        </div>
+        <div style="margin-top:16px"><button class="primary" id="save-fixed">＋ Fixkosten speichern</button></div>
+      </div>
+
+      <div class="section"></div>
+      <div class="card list-card">
+        <div class="row-item"><div class="section-title" style="margin:0">Deine Fixkosten</div></div>
+        ${c.fixedStatus.map(renderFixedManage).join('') || '<div class="row-item"><div class="muted">Noch keine Fixkosten vorhanden.</div></div>'}
+      </div>
+    `;
+  }
+
+  function renderFixedManage(f) {
+    return `
+      <div class="row-item">
+        <div>
+          <div class="item-title">${escapeHtml(f.name)}</div>
+          <div class="item-sub">${formatEUR(f.amount)} · Am ${Number(f.dueDay)}. · ${f.recurring ? 'Wiederkehrend' : 'Einmalig'}</div>
+        </div>
+        <div style="display:flex; gap:10px; align-items:center;">
+          <button class="success-btn" data-pay-fixed="${f.id}">✓</button>
+          <button class="icon-btn" data-delete-fixed="${f.id}">🗑</button>
         </div>
       </div>
-    </div>
+    `;
+  }
 
-    <div class="tabs">
-      ${tabBtn("start","Start")}
-      ${tabBtn("plan","Monatsplan")}
-      ${tabBtn("erfassen","Erfassen")}
-      ${tabBtn("ausgaben","Ausgaben")}
-      ${tabBtn("analyse","Analyse")}
-    </div>
-  `;
+  function renderExpenses(c) {
+    const groups = groupExpensesByDate(c.expenses);
+    return `
+      <div class="topbar">
+        <div>
+          <div class="title">Ausgaben</div>
+          <div class="subtitle">Diesen Monat: ${formatEUR(c.spent)}</div>
+        </div>
+      </div>
+      <div class="metrics">
+        <div class="metric"><div class="metric-label">Transaktionen</div><div class="metric-value">${c.txCount}</div></div>
+        <div class="metric"><div class="metric-label">Gesamt</div><div class="metric-value">${formatEUR(c.spent)}</div></div>
+        <div class="metric"><div class="metric-label">Durchschnitt</div><div class="metric-value">${formatEUR(c.avgExpense)}</div></div>
+      </div>
 
-  bindEvents();
-}
-function stat(label, value) {
-  return `<div class="stat"><div class="label">${label}</div><div class="value">${value}</div></div>`;
-}
-function tabBtn(key, label) {
-  return `<button class="tab-btn ${state.currentTab===key?"active":""}" data-tab="${key}">${label}</button>`;
-}
-function billCard(x) {
-  const statusClass = x.status==="paid" ? "good" : x.status==="late" ? "warn" : "good";
-  const statusLabel = x.status==="paid" ? "bezahlt" : x.status==="late" ? "überfällig" : x.status==="today" ? "heute" : `fällig am ${x.dueDay}.`;
-  return `<div class="item">
-    <div>
-      <div class="strong">${x.name}</div>
-      <div class="meta">${formatEUR(x.amount)} · fällig am ${x.dueDay}. · ${x.lastPaidDate ? "letzte Zahlung: " + x.lastPaidDate : "noch kein Zahlungsdatum"}</div>
-    </div>
-    <div class="tag ${statusClass}">${statusLabel}</div>
-  </div>`;
-}
-function fixedCostRow(x) {
-  return `<div class="item">
-    <div>
-      <div class="strong">${x.name}</div>
-      <div class="meta">${formatEUR(x.amount)} · fällig am ${x.dueDay}. · ${x.recurring ? "wiederkehrend" : "einmalig"} · ${x.lastPaidDate ? "letzte Zahlung: " + x.lastPaidDate : "kein Zahlungsdatum"}</div>
-    </div>
-    <div class="row">
-      <button class="secondary small" data-mark-paid="${x.id}">Heute bezahlt</button>
-      <button class="danger small" data-delete-fixed="${x.id}">Löschen</button>
-    </div>
-  </div>`;
-}
-function entryRow(x) {
-  return `<div class="item">
-    <div>
-      <div class="strong">${x.category} · ${formatEUR(x.amount)}</div>
-      <div class="meta">${x.date}${x.note ? " · " + x.note : ""}</div>
-    </div>
-    <button class="danger small" data-delete-entry="${x.id}">Löschen</button>
-  </div>`;
-}
-function bindEvents() {
-  document.querySelectorAll("[data-tab]").forEach(btn => btn.onclick = () => {
-    state.currentTab = btn.dataset.tab;
-    saveState();
-    render();
-  });
-  const monthSel = document.getElementById("monthSelect");
-  if (monthSel) monthSel.onchange = () => render();
+      <div class="section expense-list">
+        ${groups.length ? groups.map(group => `
+          <div class="section-title" style="font-size:16px; text-transform:uppercase; color:#6b7280;">${escapeHtml(group.label)}</div>
+          <div class="card list-card small-list">
+            ${group.items.map(renderExpenseRow).join('')}
+          </div>
+        `).join('') : '<div class="card form-card"><div class="muted">Noch keine Ausgaben vorhanden.</div></div>'}
+      </div>
+    `;
+  }
 
-  const newMonthBtn = document.getElementById("newMonthBtn");
-  if (newMonthBtn) newMonthBtn.onclick = () => {
-    const month = prompt("Neuen Monat eingeben (YYYY-MM)", nextMonthString(selectedMonth()));
-    if (!month) return;
-    ensureMonth(state, month);
-    saveState();
-    render();
-    document.getElementById("monthSelect").value = month;
-    render();
-  };
+  function renderExpenseRow(e) {
+    const meta = CATEGORY_META[e.category] || CATEGORY_META['Sonstiges'];
+    return `
+      <div class="row-item">
+        <div class="left-group">
+          <div class="category-icon ${meta.cls}">${meta.icon}</div>
+          <div>
+            <div class="item-title">${escapeHtml(e.category)}</div>
+            <div class="item-sub">${escapeHtml(e.note || 'Ohne Notiz')}</div>
+          </div>
+        </div>
+        <div style="display:flex; gap:14px; align-items:center;">
+          <div class="amount" style="color:#ef4444">-${formatEUR(e.amount).replace('€', '').trim()} €</div>
+          <button class="icon-btn" data-delete-expense="${e.id}" style="background:#eef2f8;color:#64748b;">×</button>
+        </div>
+      </div>
+    `;
+  }
 
-  const savePlanBtn = document.getElementById("savePlanBtn");
-  if (savePlanBtn) savePlanBtn.onclick = () => {
-    const m = appMonth();
-    m.income = Number(document.getElementById("incomeInput").value || 0);
-    m.salaryDay = Number(document.getElementById("salaryDayInput").value || 1);
-    m.salaryReceivedDate = document.getElementById("salaryReceivedInput").value || "";
-    m.savingsType = document.getElementById("savingsTypeInput").value;
-    m.savingsValue = Number(document.getElementById("savingsValueInput").value || 0);
-    m.notes = document.getElementById("monthNotesInput").value || "";
-    saveState();
-    render();
-  };
+  function renderAnalysis(c) {
+    const fixedPct = c.month.income ? Math.round(c.fixedTotal / c.month.income * 100) : 0;
+    const savePct = c.month.income ? Math.round(c.savingsTarget / c.month.income * 100) : 0;
+    return `
+      <div class="topbar">
+        <div>
+          <div class="title">Analyse</div>
+          <div class="subtitle">Dein finanzieller Überblick</div>
+        </div>
+      </div>
 
-  const strictToggle = document.getElementById("strictModeToggle");
-  if (strictToggle) strictToggle.onclick = () => {
-    state.settings.strictMode = !state.settings.strictMode;
-    saveState();
-    render();
-  };
+      <div class="analysis-grid">
+        <div class="card analysis-card">
+          <div class="left-group" style="margin-bottom:14px"><div class="category-icon c-transport">🏦</div><div><div class="item-sub">Fixkostenquote</div><div class="stat-value" style="margin:4px 0 0">${fixedPct}%</div></div></div>
+          <div class="bar"><span style="width:${clamp(fixedPct,0,100)}%; background:#2563eb"></span></div>
+        </div>
+        <div class="card analysis-card">
+          <div class="left-group" style="margin-bottom:14px"><div class="category-icon c-fun">🐷</div><div><div class="item-sub">Sparquote</div><div class="stat-value" style="margin:4px 0 0">${savePct}%</div></div></div>
+          <div class="bar"><span style="width:${clamp(savePct,0,100)}%; background:#10b981"></span></div>
+        </div>
+      </div>
 
-  const addFixedBtn = document.getElementById("addFixedBtn");
-  if (addFixedBtn) addFixedBtn.onclick = () => {
-    const name = document.getElementById("fcName").value.trim();
-    const amount = Number(document.getElementById("fcAmount").value || 0);
-    const dueDay = Number(document.getElementById("fcDueDay").value || 1);
-    const lastPaidDate = document.getElementById("fcLastPaid").value || "";
-    const recurring = document.getElementById("fcRecurring").value === "true";
-    if (!name || amount <= 0) {
-      alert("Bitte Namen und Betrag eingeben.");
-      return;
-    }
-    appMonth().fixedCosts.push({ id:newId(), name, amount, dueDay, lastPaidDate, recurring });
-    saveState();
-    render();
-  };
+      <div class="section"></div>
+      <div class="card analysis-card">
+        <div class="section-title" style="margin-bottom:16px">Budget-Nutzung</div>
+        <div class="analysis-grid" style="align-items:center;">
+          <div>
+            <div class="ring" style="background: conic-gradient(#2563eb ${Math.round(c.usedPct) * 3.6}deg, #dbe4f0 0deg);">
+              <div class="ring-inner"><div><div style="font-size:34px;font-weight:800">${Math.round(c.usedPct)}%</div><div class="muted">genutzt</div></div></div>
+            </div>
+          </div>
+          <div>
+            <div class="legend-line"><span class="legend-dot" style="background:#2563eb"></span>Ausgegeben: ${formatEUR(c.spent)}</div>
+            <div class="legend-line"><span class="legend-dot" style="background:#dbe4f0"></span>Verfügbar: ${formatEUR(c.remaining)}</div>
+            <div class="legend-line"><span class="legend-dot" style="background:#10b981"></span>Sparziel: ${formatEUR(c.savingsTarget)}</div>
+          </div>
+        </div>
+        <div class="barline"><div class="bar"><span style="width:${c.usedPct}%; background:#2563eb"></span></div></div>
+      </div>
 
-  const addEntryBtn = document.getElementById("addEntryBtn");
-  if (addEntryBtn) addEntryBtn.onclick = () => {
-    const date = document.getElementById("entryDate").value;
-    const category = document.getElementById("entryCategory").value;
-    const note = document.getElementById("entryNote").value.trim();
-    const amount = Number(document.getElementById("entryAmount").value || 0);
-    if (!date || amount <= 0) {
-      alert("Bitte Datum und Betrag eingeben.");
-      return;
-    }
-    appMonth().entries.unshift({ id:newId(), date, category, note, amount });
-    saveState();
-    state.currentTab = "ausgaben";
-    render();
-  };
+      <div class="section"></div>
+      <div class="card analysis-card">
+        <div class="section-title">Einkommensverteilung</div>
+        ${renderBarLine('Fixkosten', c.fixedTotal, c.month.income, '#ef4444')}
+        ${renderBarLine('Sparziel', c.savingsTarget, c.month.income, '#10b981')}
+        ${renderBarLine('Ausgegeben', c.spent, c.month.income, '#f59e0b')}
+        ${renderBarLine('Übrig', c.remaining, c.month.income, '#2563eb')}
+      </div>
 
-  document.querySelectorAll("[data-delete-fixed]").forEach(btn => btn.onclick = () => {
-    const id = Number(btn.dataset.deleteFixed);
-    appMonth().fixedCosts = appMonth().fixedCosts.filter(x => x.id !== id);
-    saveState();
-    render();
-  });
-  document.querySelectorAll("[data-mark-paid]").forEach(btn => btn.onclick = () => {
-    const id = Number(btn.dataset.markPaid);
-    const item = appMonth().fixedCosts.find(x => x.id === id);
-    if (item) item.lastPaidDate = todayStr();
-    saveState();
-    render();
-  });
-  document.querySelectorAll("[data-delete-entry]").forEach(btn => btn.onclick = () => {
-    const id = Number(btn.dataset.deleteEntry);
-    appMonth().entries = appMonth().entries.filter(x => x.id !== id);
-    saveState();
-    render();
-  });
+      <div class="section"></div>
+      <div class="card list-card">
+        <div class="row-item"><div class="section-title" style="margin:0">Kategorien</div></div>
+        ${c.categoryRows.length ? c.categoryRows.map(cat => `
+          <div class="row-item">
+            <div class="left-group">
+              <div class="category-icon ${(CATEGORY_META[cat.name] || CATEGORY_META['Sonstiges']).cls}">${(CATEGORY_META[cat.name] || CATEGORY_META['Sonstiges']).icon}</div>
+              <div><div class="item-title">${escapeHtml(cat.name)}</div><div class="item-sub">${cat.pct}% deiner Ausgaben</div></div>
+            </div>
+            <div class="amount">${formatEUR(cat.amount)}</div>
+          </div>`).join('') : '<div class="row-item"><div class="muted">Noch keine Kategorien vorhanden.</div></div>'}
+      </div>
 
-  const exportBtn = document.getElementById("exportBtn");
-  if (exportBtn) exportBtn.onclick = () => {
-    const blob = new Blob([JSON.stringify(state, null, 2)], {type:"application/json"});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `sparplan-export-${selectedMonth()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-}
-function nextMonthString(month) {
-  const [y,m] = month.split("-").map(Number);
-  const d = new Date(y, m, 1);
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
-}
-render();
+      <div class="section"></div>
+      <div class="card split-table">
+        <div class="section-title">Überblick</div>
+        <div class="split-row"><span class="muted">Einnahmen</span><strong>${formatEUR(c.month.income)}</strong></div>
+        <div class="split-row"><span class="muted">Fixkosten gesamt</span><strong>${formatEUR(c.fixedTotal)}</strong></div>
+        <div class="split-row"><span class="muted">Sparziel</span><strong>${formatEUR(c.savingsTarget)}</strong></div>
+        <div class="split-row"><span class="muted">Flexibles Budget</span><strong>${formatEUR(c.flexible)}</strong></div>
+        <div class="split-row"><span class="muted">Ausgegeben</span><strong>${formatEUR(c.spent)}</strong></div>
+        <div class="split-row"><span class="muted">Noch übrig</span><strong>${formatEUR(c.remaining)}</strong></div>
+        <div class="split-row"><span class="muted">Transaktionen</span><strong>${c.txCount}</strong></div>
+      </div>
+    `;
+  }
+
+  function renderBarLine(label, amount, total, color) {
+    const pct = total > 0 ? clamp(amount / total * 100, 0, 100) : 0;
+    return `
+      <div class="barline">
+        <div class="barline-top"><span>${escapeHtml(label)}</span><strong>${formatEUR(amount)}</strong></div>
+        <div class="bar"><span style="width:${pct}%; background:${color}"></span></div>
+      </div>
+    `;
+  }
+
+  function renderAddExpenseSheet() {
+    const today = todayISO();
+    return `
+      <div class="section-title">Neue Ausgabe</div>
+      <div class="field"><div class="label">Betrag (€)</div><input class="input" id="expense-amount" type="number" placeholder="0.00" /></div>
+      <div class="field"><div class="label">Kategorie</div>
+        <select class="select" id="expense-category">
+          <option>Essen</option>
+          <option>Transport</option>
+          <option>Freizeit</option>
+          <option>Haushalt</option>
+          <option>Sonstiges</option>
+        </select>
+      </div>
+      <div class="field"><div class="label">Notiz</div><input class="input" id="expense-note" placeholder="z.B. Supermarkt" /></div>
+      <div class="field"><div class="label">Datum</div><input class="input" id="expense-date" type="date" value="${today}" /></div>
+      <button class="primary" id="save-expense" style="width:100%">Ausgabe speichern</button>
+    `;
+  }
+
+  function renderNav() {
+    return `
+      <div class="bottom-nav">
+        <div class="nav-shell">
+          <button class="nav-btn" data-view="start"><div class="ico">▦</div><div>Start</div></button>
+          <button class="nav-btn" data-view="plan"><div class="ico">🗓️</div><div>Monatsplan</div></button>
+          <button class="nav-btn plus" id="open-add-sheet"><div class="plus-circle">＋</div></button>
+          <button class="nav-btn" data-view="expenses"><div class="ico">🧾</div><div>Ausgaben</div></button>
+          <button class="nav-btn" data-view="analysis"><div class="ico">✨</div><div>Analyse</div></button>
+        </div>
+      </div>
+    `;
+  }
+
+  function bind() {
+    document.querySelectorAll('[data-view]').forEach(btn => {
+      btn.addEventListener('click', () => showView(btn.getAttribute('data-view')));
+    });
+    const openSheet = document.getElementById('open-add-sheet');
+    if (openSheet) openSheet.addEventListener('click', () => toggleSheet(true));
+    const backdrop = document.getElementById('sheet-backdrop');
+    if (backdrop) backdrop.addEventListener('click', () => toggleSheet(false));
+    const saveExpense = document.getElementById('save-expense');
+    if (saveExpense) saveExpense.addEventListener('click', onSaveExpense);
+    const strictBtn = document.getElementById('toggle-strict');
+    if (strictBtn) strictBtn.addEventListener('click', () => { currentMonth().strictMode = !currentMonth().strictMode; render(); });
+
+    const income = document.getElementById('income-input');
+    if (income) income.addEventListener('input', e => { currentMonth().income = Number(e.target.value || 0); save(); });
+    const salaryDay = document.getElementById('salary-day-input');
+    if (salaryDay) salaryDay.addEventListener('input', e => { currentMonth().salaryDay = clamp(Number(e.target.value || 1), 1, 31); save(); });
+    const salaryDate = document.getElementById('salary-date-input');
+    if (salaryDate) salaryDate.addEventListener('input', e => { currentMonth().salaryReceivedDate = e.target.value || ''; save(); });
+    const savings = document.getElementById('savings-input');
+    if (savings) savings.addEventListener('input', e => { currentMonth().savingsValue = Number(e.target.value || 0); save(); });
+    document.querySelectorAll('[data-savings-type]').forEach(btn => btn.addEventListener('click', () => {
+      currentMonth().savingsType = btn.getAttribute('data-savings-type');
+      render();
+      showView('plan');
+    }));
+    const strictSwitch = document.getElementById('strict-switch');
+    if (strictSwitch) strictSwitch.addEventListener('click', () => { currentMonth().strictMode = !currentMonth().strictMode; render(); showView('plan'); });
+    const recBtn = document.getElementById('fixed-recurring');
+    if (recBtn) recBtn.addEventListener('click', () => recBtn.classList.toggle('on'));
+    const saveFixed = document.getElementById('save-fixed');
+    if (saveFixed) saveFixed.addEventListener('click', onSaveFixed);
+    document.querySelectorAll('[data-delete-fixed]').forEach(btn => btn.addEventListener('click', () => {
+      currentMonth().fixedCosts = currentMonth().fixedCosts.filter(x => x.id !== btn.getAttribute('data-delete-fixed'));
+      render();
+      showView('plan');
+    }));
+    document.querySelectorAll('[data-pay-fixed]').forEach(btn => btn.addEventListener('click', () => {
+      const item = currentMonth().fixedCosts.find(x => x.id === btn.getAttribute('data-pay-fixed'));
+      if (item) item.paidDate = todayISO();
+      render();
+      showView('plan');
+    }));
+    document.querySelectorAll('[data-delete-expense]').forEach(btn => btn.addEventListener('click', () => {
+      currentMonth().expenses = currentMonth().expenses.filter(x => x.id !== btn.getAttribute('data-delete-expense'));
+      render();
+      showView('expenses');
+    }));
+    const newMonth = document.getElementById('new-month');
+    if (newMonth) newMonth.addEventListener('click', onNewMonth);
+  }
+
+  function onSaveExpense() {
+    const amount = Number(document.getElementById('expense-amount').value || 0);
+    const category = document.getElementById('expense-category').value;
+    const note = document.getElementById('expense-note').value.trim();
+    const date = document.getElementById('expense-date').value || todayISO();
+    if (!amount || amount <= 0) { alert('Bitte einen Betrag eingeben.'); return; }
+    const m = monthKeyFromDate(date);
+    ensureMonth(m);
+    state.activeMonth = m;
+    currentMonth().expenses.unshift({ id: uid(), amount, category, note, date });
+    render();
+    showView('expenses');
+    toggleSheet(false);
+  }
+
+  function onSaveFixed() {
+    const name = document.getElementById('fixed-name').value.trim();
+    const amount = Number(document.getElementById('fixed-amount').value || 0);
+    const due = clamp(Number(document.getElementById('fixed-due').value || 1), 1, 31);
+    const recurring = document.getElementById('fixed-recurring').classList.contains('on');
+    if (!name || amount <= 0) { alert('Bitte Name und Betrag eingeben.'); return; }
+    currentMonth().fixedCosts.push({ id: uid(), name, amount, dueDay: due, recurring, paidDate: '' });
+    render();
+    showView('plan');
+  }
+
+  function onNewMonth() {
+    const [y, m] = state.activeMonth.split('-').map(Number);
+    const d = new Date(y, m, 1);
+    const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    ensureMonth(month);
+    state.activeMonth = month;
+    render();
+    showView('plan');
+  }
+
+  function showView(view) {
+    window.__currentView = view;
+    ['start', 'plan', 'expenses', 'analysis'].forEach(v => {
+      const el = document.getElementById('view-' + v);
+      if (el) el.classList.toggle('hidden', v !== view);
+    });
+    document.querySelectorAll('.nav-btn[data-view]').forEach(btn => {
+      btn.classList.toggle('active', btn.getAttribute('data-view') === view);
+    });
+  }
+
+  function toggleSheet(show) {
+    document.getElementById('sheet-backdrop').classList.toggle('show', show);
+    document.getElementById('sheet-add-expense').classList.toggle('show', show);
+  }
+
+  function groupExpensesByDate(items) {
+    const map = {};
+    items.forEach(it => {
+      const k = it.date;
+      (map[k] ||= []).push(it);
+    });
+    return Object.keys(map).sort((a,b) => b.localeCompare(a)).map(k => ({
+      label: formatDateHeadline(k),
+      items: map[k].sort((a,b) => b.id.localeCompare(a.id))
+    }));
+  }
+
+  function formatDateHeadline(dateStr) {
+    const d = new Date(dateStr + 'T12:00:00');
+    return new Intl.DateTimeFormat('de-DE', { weekday: 'long', day: '2-digit', month: 'long' }).format(d).toUpperCase();
+  }
+
+  function escapeHtml(s) {
+    return String(s || '').replace(/[&<>"']/g, ch => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[ch]));
+  }
+
+  render();
+})();

@@ -1,21 +1,13 @@
 {
-  "name": "Sparplan App",
+  "name": "Sparplan",
   "short_name": "Sparplan",
   "start_url": "./",
   "display": "standalone",
-  "background_color": "#f3f6fb",
-  "theme_color": "#0f172a",
-  "description": "Budget planen, Ausgaben erfassen, Fixkosten mit Fälligkeit verwalten und Sparziele erreichen.",
+  "background_color": "#f5f7fb",
+  "theme_color": "#2563eb",
+  "description": "Budget planen, Fixkosten verwalten und Ausgaben erfassen.",
   "icons": [
-    {
-      "src": "./icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png"
-    },
-    {
-      "src": "./icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png"
-    }
+    { "src": "./icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "./icon-512.png", "sizes": "512x512", "type": "image/png" }
   ]
 }
